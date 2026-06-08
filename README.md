@@ -1,7 +1,7 @@
 # 🐒 BounceToMonkey
 
 **Live tennis aces → monkeys in Manhattan.**
-Every ace by Sinner, Djokovic, Alcaraz, or Zverev drops a monkey on the Manhattan map. In real time.
+Every ace by Sinner, Djokovic, Alcaraz, Zverev, or Fritz drops a monkey on the Manhattan map. In real time.
 
 ---
 
