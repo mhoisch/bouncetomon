@@ -5,7 +5,42 @@ const WebSocket = require('ws');
 const fetch = require('node-fetch');
 
 const PORT = process.env.PORT || 3000;
-const POLL_INTERVAL = 30000; // 30 seconds
+const POLL_INTERVAL = 30000;
+const DB_FILE = path.join(__dirname, 'aces.json');
+
+// ── Persistent database ──
+function loadDB() {
+  try {
+    if (fs.existsSync(DB_FILE)) {
+      return JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+    }
+  } catch (e) {
+    console.error('DB load error:', e.message);
+  }
+  return {
+    startDate: '2026-06-07T08:01:00Z',
+    totalAces: 0,
+    players: {
+      sinner:   { aces: 0 },
+      djokovic: { aces: 0 },
+      alcaraz:  { aces: 0 },
+      zverev:   { aces: 0 },
+      fritz:    { aces: 0 },
+    },
+    log: []
+  };
+}
+
+function saveDB(db) {
+  try {
+    fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
+  } catch (e) {
+    console.error('DB save error:', e.message);
+  }
+}
+
+let db = loadDB();
+console.log(`🐒 Loaded DB — total aces since epoch: ${db.totalAces}`);
 
 // ── Player config ──
 const PLAYERS = {
@@ -13,15 +48,15 @@ const PLAYERS = {
   djokovic: { names: ['djokovic', 'n. djokovic', 'novak djokovic'], lastAces: 0, inMatch: false },
   alcaraz:  { names: ['alcaraz', 'c. alcaraz', 'carlos alcaraz'],   lastAces: 0, inMatch: false },
   zverev:   { names: ['zverev', 'a. zverev', 'alexander zverev'],   lastAces: 0, inMatch: false },
+  fritz:    { names: ['fritz', 't. fritz', 'taylor fritz'],         lastAces: 0, inMatch: false },
 };
 
-// ── HTTP server — serves index.html ──
+// ── HTTP server ──
 const server = http.createServer((req, res) => {
   if (req.url === '/' || req.url === '/index.html') {
     const file = path.join(__dirname, 'index.html');
     fs.readFile(file, 'utf8', (err, data) => {
       if (err) { res.writeHead(500); res.end('Error loading page'); return; }
-      // Inject the Mapbox token from environment variable — never stored in code
       const token = process.env.MAPBOX_TOKEN || '';
       const injected = data.replace(
         'window.__mapboxToken__; // injected by server',
@@ -30,9 +65,13 @@ const server = http.createServer((req, res) => {
       res.writeHead(200, { 'Content-Type': 'text/html' });
       res.end(injected);
     });
+  } else if (req.url === '/state') {
+    // Client fetches this on load to get full persistent state
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(db));
   } else if (req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'ok', players: PLAYERS }));
+    res.end(JSON.stringify({ status: 'ok', totalAces: db.totalAces }));
   } else {
     res.writeHead(404); res.end('Not found');
   }
@@ -50,10 +89,8 @@ function broadcast(data) {
 
 wss.on('connection', ws => {
   console.log('Client connected. Total:', wss.clients.size);
-  // Send current state to new visitor
-  ws.send(JSON.stringify({ type: 'state', players: Object.fromEntries(
-    Object.entries(PLAYERS).map(([k, v]) => [k, { inMatch: v.inMatch, lastAces: v.lastAces }])
-  )}));
+  // Send full persistent state to new visitor
+  ws.send(JSON.stringify({ type: 'state', db }));
 });
 
 // ── Tennis data polling ──
@@ -71,8 +108,8 @@ async function pollMatches() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     const events = data.events || [];
-
     let anyLive = false;
+    let dbChanged = false;
 
     for (const [key, player] of Object.entries(PLAYERS)) {
       const match = events.find(e => {
@@ -91,26 +128,33 @@ async function pollMatches() {
 
         const diff = aceCount - player.lastAces;
         if (diff > 0) {
-          console.log(`🎾 ${key} hit ${diff} ace(s)! Total: ${aceCount}`);
+          console.log(`🎾 ${key} hit ${diff} ace(s)!`);
           for (let i = 0; i < diff; i++) {
-            broadcast({ type: 'ace', player: key, tournament: match.tournament?.name || 'ATP' });
+            const now = new Date().toISOString();
+            const tournament = match.tournament?.name || 'ATP Tour';
+
+            // Save to persistent DB
+            db.totalAces++;
+            db.players[key].aces++;
+            db.log.push({ player: key, tournament, time: now });
+            dbChanged = true;
+
+            broadcast({ type: 'ace', player: key, tournament });
           }
           player.lastAces = aceCount;
         }
 
         broadcast({ type: 'status', player: key, inMatch: true, tournament: match.tournament?.name || 'ATP' });
       } else {
-        if (player.inMatch) {
-          // Match just ended — reset ace counter for next match
-          player.lastAces = 0;
-        }
+        if (player.inMatch) player.lastAces = 0;
         player.inMatch = false;
         broadcast({ type: 'status', player: key, inMatch: false });
       }
     }
 
+    if (dbChanged) saveDB(db);
     broadcast({ type: 'poll', anyLive });
-    console.log(`[${new Date().toISOString()}] Poll complete. Live matches: ${anyLive}`);
+    console.log(`[${new Date().toISOString()}] Poll done. Live: ${anyLive} | Total aces: ${db.totalAces}`);
 
   } catch (err) {
     console.error('Poll error:', err.message);
@@ -118,9 +162,9 @@ async function pollMatches() {
   }
 }
 
-// ── Start polling ──
 server.listen(PORT, () => {
-  console.log(`🐒 BounceToMonkey server running on port ${PORT}`);
-  pollMatches(); // immediate first poll
+  console.log(`🐒 BounceToMonkey running on port ${PORT}`);
+  console.log(`📊 Total aces in DB: ${db.totalAces}`);
+  pollMatches();
   setInterval(pollMatches, POLL_INTERVAL);
 });
