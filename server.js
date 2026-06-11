@@ -93,69 +93,69 @@ wss.on('connection', ws => {
   ws.send(JSON.stringify({ type: 'state', db }));
 });
 
-// ── Tennis data polling ──
+// ── Tennis data polling via RapidAPI ──
 async function pollMatches() {
   try {
-    const res = await fetch('https://api.sofascore.com/api/v1/sport/tennis/events/live', {
+    const RAPID_KEY = process.env.RAPIDAPI_KEY || '';
+    const today = new Date().toISOString().slice(0, 10);
+
+    // Fetch today's fixtures with live scores
+    const res = await fetch(`https://tennis-api-atp-wta-itf.p.rapidapi.com/tennis/v2/atp/h2h/fixtures/date/${today}`, {
       headers: {
-        'Accept': 'application/json, text/plain, */*',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Referer': 'https://www.sofascore.com/',
-        'Origin': 'https://www.sofascore.com',
-        'Cache-Control': 'no-cache',
-        'Pragma': 'no-cache',
-        'sec-ch-ua': '"Chromium";v="124", "Google Chrome";v="124"',
-        'sec-ch-ua-mobile': '?0',
-        'sec-ch-ua-platform': '"macOS"',
-        'Sec-Fetch-Dest': 'empty',
-        'Sec-Fetch-Mode': 'cors',
-        'Sec-Fetch-Site': 'same-origin',
+        'x-rapidapi-key': RAPID_KEY,
+        'x-rapidapi-host': 'tennis-api-atp-wta-itf.p.rapidapi.com',
+        'Content-Type': 'application/json',
       },
       timeout: 10000,
     });
 
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    const events = data.events || [];
+    const fixtures = data.fixtures || data.results || data || [];
+    const events = Array.isArray(fixtures) ? fixtures : Object.values(fixtures);
+
     let anyLive = false;
     let dbChanged = false;
 
     for (const [key, player] of Object.entries(PLAYERS)) {
+      // Find a live match featuring this player
       const match = events.find(e => {
-        const h = (e.homeTeam?.name || '').toLowerCase();
-        const a = (e.awayTeam?.name || '').toLowerCase();
-        return player.names.some(n => h.includes(n) || a.includes(n));
+        const p1 = (e.player1?.name || e.home?.name || e.player_1_name || '').toLowerCase();
+        const p2 = (e.player2?.name || e.away?.name || e.player_2_name || '').toLowerCase();
+        const isLive = e.status === 'live' || e.status === 'inprogress' || e.live === true || e.status_code === 'IN';
+        return isLive && player.names.some(n => p1.includes(n) || p2.includes(n));
       });
 
       if (match) {
         anyLive = true;
         player.inMatch = true;
-        const isHome = player.names.some(n => (match.homeTeam?.name || '').toLowerCase().includes(n));
-        const aceCount = isHome
-          ? (match.homeScore?.aces ?? 0)
-          : (match.awayScore?.aces ?? 0);
 
-        const diff = aceCount - player.lastAces;
+        const isP1 = player.names.some(n =>
+          (match.player1?.name || match.home?.name || match.player_1_name || '').toLowerCase().includes(n)
+        );
+
+        // Try multiple possible ace field locations
+        const stats = match.stats || match.statistics || match.score || {};
+        const aceCount = isP1
+          ? (stats.player1_aces || stats.home_aces || stats.aces_p1 || match.player1?.aces || 0)
+          : (stats.player2_aces || stats.away_aces || stats.aces_p2 || match.player2?.aces || 0);
+
+        const diff = Number(aceCount) - player.lastAces;
         if (diff > 0) {
-          console.log(`🎾 ${key} hit ${diff} ace(s)!`);
+          console.log(`🎾 ${key} hit ${diff} ace(s)! Total: ${aceCount}`);
+          const tournament = match.tournament?.name || match.competition || match.event_name || 'ATP Tour';
           for (let i = 0; i < diff; i++) {
-            const now = new Date().toISOString();
-            const tournament = match.tournament?.name || 'ATP Tour';
-
-            // Save to persistent DB
             db.totalAces++;
             db.players[key].aces++;
-            db.log.push({ player: key, tournament, time: now });
+            db.log.push({ player: key, tournament, time: new Date().toISOString() });
             dbChanged = true;
-
             broadcast({ type: 'ace', player: key, tournament });
           }
-          player.lastAces = aceCount;
+          player.lastAces = Number(aceCount);
         }
 
-        broadcast({ type: 'status', player: key, inMatch: true, tournament: match.tournament?.name || 'ATP' });
+        const tournament = match.tournament?.name || match.competition || 'ATP Tour';
+        broadcast({ type: 'status', player: key, inMatch: true, tournament });
       } else {
         if (player.inMatch) player.lastAces = 0;
         player.inMatch = false;
