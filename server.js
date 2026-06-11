@@ -72,6 +72,29 @@ const server = http.createServer((req, res) => {
   } else if (req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ status: 'ok', totalAces: db.totalAces }));
+  } else if (req.url === '/ace' && req.method === 'POST') {
+    // Browser reports a new ace — persist it
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', () => {
+      try {
+        const { player, tournament, count } = JSON.parse(body);
+        if (PLAYERS[player]) {
+          const n = Number(count) || 1;
+          for (let i = 0; i < n; i++) {
+            db.totalAces++;
+            db.players[player].aces++;
+            db.log.push({ player, tournament: tournament || 'ATP Tour', time: new Date().toISOString() });
+          }
+          saveDB(db);
+          console.log(`💾 Persisted ${n} ace(s) for ${player}. Total: ${db.totalAces}`);
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, total: db.totalAces }));
+      } catch(e) {
+        res.writeHead(400); res.end('Bad request');
+      }
+    });
   } else {
     res.writeHead(404); res.end('Not found');
   }
