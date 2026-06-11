@@ -116,57 +116,60 @@ wss.on('connection', ws => {
   ws.send(JSON.stringify({ type: 'state', db }));
 });
 
-// ── Tennis data polling via RapidAPI ──
+// ── Tennis data polling via SportDB/Flashscore ──
 async function pollMatches() {
   try {
-    const RAPID_KEY = process.env.RAPIDAPI_KEY || '';
-    const today = new Date().toISOString().slice(0, 10);
-
-    // Fetch today's fixtures with live scores
-    const res = await fetch(`https://tennis-api-atp-wta-itf.p.rapidapi.com/tennis/v2/atp/h2h/fixtures/date/${today}`, {
+    const SPORTDB_KEY = process.env.SPORTDB_KEY || '';
+    
+    const res = await fetch('https://api.sportdb.dev/api/flashscore/tennis/live', {
       headers: {
-        'x-rapidapi-key': RAPID_KEY,
-        'x-rapidapi-host': 'tennis-api-atp-wta-itf.p.rapidapi.com',
-        'Content-Type': 'application/json',
+        'X-API-Key': SPORTDB_KEY,
+        'Accept': 'application/json',
       },
       timeout: 10000,
     });
 
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    const fixtures = data.fixtures || data.results || data || [];
-    const events = Array.isArray(fixtures) ? fixtures : Object.values(fixtures);
+    
+    // Log raw response shape once for debugging
+    if (!pollMatches._logged) {
+      console.log('SportDB sample:', JSON.stringify(data).slice(0, 500));
+      pollMatches._logged = true;
+    }
+
+    const events = data.events || data.matches || data.data || data || [];
+    const list = Array.isArray(events) ? events : Object.values(events);
 
     let anyLive = false;
     let dbChanged = false;
 
     for (const [key, player] of Object.entries(PLAYERS)) {
-      // Find a live match featuring this player
-      const match = events.find(e => {
-        const p1 = (e.player1?.name || e.home?.name || e.player_1_name || '').toLowerCase();
-        const p2 = (e.player2?.name || e.away?.name || e.player_2_name || '').toLowerCase();
-        const isLive = e.status === 'live' || e.status === 'inprogress' || e.live === true || e.status_code === 'IN';
-        return isLive && player.names.some(n => p1.includes(n) || p2.includes(n));
+      const match = list.find(e => {
+        const p1 = (e.home_name || e.player1 || e.home || e.player_1 || '').toLowerCase();
+        const p2 = (e.away_name || e.player2 || e.away || e.player_2 || '').toLowerCase();
+        return player.names.some(n => p1.includes(n) || p2.includes(n));
       });
 
       if (match) {
         anyLive = true;
         player.inMatch = true;
 
-        const isP1 = player.names.some(n =>
-          (match.player1?.name || match.home?.name || match.player_1_name || '').toLowerCase().includes(n)
+        const isHome = player.names.some(n =>
+          (match.home_name || match.player1 || match.home || '').toLowerCase().includes(n)
         );
 
-        // Try multiple possible ace field locations
-        const stats = match.stats || match.statistics || match.score || {};
-        const aceCount = isP1
-          ? (stats.player1_aces || stats.home_aces || stats.aces_p1 || match.player1?.aces || 0)
-          : (stats.player2_aces || stats.away_aces || stats.aces_p2 || match.player2?.aces || 0);
+        // Try every possible ace field
+        const homeAces = match.home_aces ?? match.stats?.home_aces ?? match.statistics?.home_aces ?? 
+                         match.score?.home_aces ?? match.home_stats?.aces ?? 0;
+        const awayAces = match.away_aces ?? match.stats?.away_aces ?? match.statistics?.away_aces ?? 
+                         match.score?.away_aces ?? match.away_stats?.aces ?? 0;
+        const aceCount = Number(isHome ? homeAces : awayAces);
 
-        const diff = Number(aceCount) - player.lastAces;
+        const diff = aceCount - player.lastAces;
         if (diff > 0) {
           console.log(`🎾 ${key} hit ${diff} ace(s)! Total: ${aceCount}`);
-          const tournament = match.tournament?.name || match.competition || match.event_name || 'ATP Tour';
+          const tournament = match.tournament_name || match.competition || match.league || 'ATP Tour';
           for (let i = 0; i < diff; i++) {
             db.totalAces++;
             db.players[key].aces++;
@@ -174,10 +177,10 @@ async function pollMatches() {
             dbChanged = true;
             broadcast({ type: 'ace', player: key, tournament });
           }
-          player.lastAces = Number(aceCount);
+          player.lastAces = aceCount;
         }
 
-        const tournament = match.tournament?.name || match.competition || 'ATP Tour';
+        const tournament = match.tournament_name || match.competition || 'ATP Tour';
         broadcast({ type: 'status', player: key, inMatch: true, tournament });
       } else {
         if (player.inMatch) player.lastAces = 0;
@@ -188,13 +191,14 @@ async function pollMatches() {
 
     if (dbChanged) saveDB(db);
     broadcast({ type: 'poll', anyLive });
-    console.log(`[${new Date().toISOString()}] Poll done. Live: ${anyLive} | Total aces: ${db.totalAces}`);
+    console.log(`[${new Date().toISOString()}] Poll done. Live: ${anyLive} | Total: ${db.totalAces}`);
 
   } catch (err) {
     console.error('Poll error:', err.message);
     broadcast({ type: 'error', message: err.message });
   }
 }
+
 
 server.listen(PORT, () => {
   console.log(`🐒 BounceToMonkey running on port ${PORT}`);
