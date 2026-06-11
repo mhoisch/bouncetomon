@@ -447,21 +447,24 @@
       document.getElementById('zi').onclick = () => map.zoomIn();
       document.getElementById('zo').onclick = () => map.zoomOut();
 
-      map.on('load', () => {
+      map.on('load', async () => {
         // Restore UI counts from session
         document.getElementById('total-count').textContent = totalAces.toLocaleString();
         Object.keys(PLAYERS).forEach(k => {
           const el = document.getElementById('aces-' + k);
           if (el) el.textContent = PLAYERS[k].aces;
         });
+        await loadPersistentState();
         connectWebSocket();
+        pollTennisData();
         let countdown = 30;
         setInterval(() => {
           countdown--;
-          if (countdown < 0) countdown = 30;
+          if (countdown <= 0) { pollTennisData(); countdown = 30; }
           const rt = document.getElementById('refresh-text');
           if (rt) rt.textContent = countdown === 30 ? 'refreshes every 30s' : 'next refresh in ' + countdown + 's';
         }, 1000);
+
       });
 
       // Update all monkey sizes whenever zoom changes
@@ -569,6 +572,72 @@
       return lat > 40.695 && lat < 40.882 && lng > -74.022 && lng < -73.907;
     }
 
+    // ── Load persistent state from server on page load ──
+    async function loadPersistentState() {
+      try {
+        const res = await fetch('/state');
+        const db = await res.json();
+        // Restore total count
+        totalAces = db.totalAces || 0;
+        document.getElementById('total-count').textContent = totalAces.toLocaleString();
+        // Restore per-player ace counts
+        Object.keys(PLAYERS).forEach(k => {
+          if (db.players && db.players[k]) {
+            PLAYERS[k].aces = db.players[k].aces || 0;
+            const el = document.getElementById('aces-' + k);
+            if (el) el.textContent = PLAYERS[k].aces;
+          }
+        });
+        // Spawn historical monkeys on map (up to 200 most recent)
+        if (db.log && db.log.length > 0) {
+          const recent = db.log.slice(-200);
+          recent.forEach((entry, i) => {
+            setTimeout(() => spawnMonkeyHistorical(entry.player, entry.tournament, entry.time), i * 30);
+          });
+        }
+        console.log(`Loaded ${db.totalAces} aces from persistent DB`);
+      } catch (e) {
+        console.warn('Could not load persistent state:', e.message);
+      }
+    }
+
+    // Spawn a historical monkey (no count increment, just visual)
+    function spawnMonkeyHistorical(playerKey, tournament, isoTime) {
+      const player = PLAYERS[playerKey];
+      if (!player || !map) return;
+      const { lat, lng } = randomManhattanCoord();
+      const names = { sinner: 'Sinner', djokovic: 'Djokovic', alcaraz: 'Alcaraz', zverev: 'Zverev', fritz: 'Fritz' };
+      const size = monkeySize();
+      const el = document.createElement('div');
+      el.className = 'monkey-marker';
+      const emoji = document.createElement('div');
+      emoji.className = 'monkey-emoji';
+      emoji.textContent = '🐒';
+      emoji.style.fontSize = size + 'px';
+      emoji.style.filter = `drop-shadow(0 0 5px ${player.color})`;
+      const shadow = document.createElement('div');
+      shadow.className = 'monkey-shadow';
+      shadow.style.background = player.color;
+      shadow.style.width = Math.round(size * 0.55) + 'px';
+      shadow.style.height = Math.round(size * 0.18) + 'px';
+      el.appendChild(emoji); el.appendChild(shadow);
+      const timeStr = new Date(isoTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      const dateStr = new Date(isoTime).toLocaleDateString([], { month: 'short', day: 'numeric' });
+      const tournStr = (tournament || 'ATP Tour').slice(0, 22);
+      const popup = new mapboxgl.Popup({ offset: [0, -size - 4], closeButton: true, maxWidth: '210px' })
+        .setHTML(`
+          <div class="monkey-popup-name" style="color:${player.color}">${names[playerKey]} — Ace</div>
+          <div class="monkey-popup-row"><span class="monkey-popup-label">Date</span><span class="monkey-popup-val">${dateStr}</span></div>
+          <div class="monkey-popup-row"><span class="monkey-popup-label">Time</span><span class="monkey-popup-val">${timeStr}</span></div>
+          <div class="monkey-popup-row"><span class="monkey-popup-label">Tournament</span><span class="monkey-popup-val">${tournStr}</span></div>
+        `);
+      const marker = new mapboxgl.Marker({ element: el, anchor: 'bottom' })
+        .setLngLat([lng, lat]).setPopup(popup).addTo(map);
+      markers.push({ marker, el });
+      requestAnimationFrame(() => { el.style.transform = 'scale(1)'; });
+      el.addEventListener('click', () => marker.togglePopup());
+    }
+
     // ── WebSocket client — connects to our backend ──
     function connectWebSocket() {
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -581,6 +650,11 @@
 
       ws.onmessage = (event) => {
         const msg = JSON.parse(event.data);
+
+        if (msg.type === 'state') {
+          // Server sends full state on connect — already loaded via /state, ignore duplicate
+          return;
+        }
 
         if (msg.type === 'ace') {
           spawnMonkey(msg.player, msg.tournament);
@@ -597,7 +671,6 @@
           if (!idleDismissed && !msg.anyLive) {
             document.getElementById('idle-msg').style.display = 'block';
           }
-          // reset countdown display
           const rt = document.getElementById('refresh-text');
           if (rt) { countdown = 30; rt.textContent = 'refreshes every 30s'; }
         }
@@ -620,8 +693,67 @@
       };
     }
 
-    // Dummy — not used with WebSocket, kept for countdown timer reference
+    // Dummy
     async function fetchLiveMatches() {}
+
+    // ── Browser-side tennis polling via CORS proxy ──
+    async function pollTennisData() {
+      try {
+        setStatus('checking');
+        const proxyUrl = 'https://corsproxy.io/?url=';
+        const targetUrl = encodeURIComponent('https://api.sofascore.com/api/v1/sport/tennis/events/live');
+        const res = await fetch(proxyUrl + targetUrl, {
+          headers: { 'Accept': 'application/json' }
+        });
+        if (!res.ok) throw new Error('non-200');
+        const data = await res.json();
+        const events = data.events || [];
+        let anyLive = false;
+
+        for (const [key, player] of Object.entries(PLAYERS)) {
+          const match = events.find(e => {
+            const h = (e.homeTeam?.name || '').toLowerCase();
+            const a = (e.awayTeam?.name || '').toLowerCase();
+            return player.names.some(n => h.includes(n) || a.includes(n));
+          });
+
+          if (match) {
+            anyLive = true;
+            player.inMatch = true;
+            const isHome = player.names.some(n => (match.homeTeam?.name || '').toLowerCase().includes(n));
+            const aceCount = isHome ? (match.homeScore?.aces ?? 0) : (match.awayScore?.aces ?? 0);
+            const diff = Number(aceCount) - player.lastAces;
+            if (diff > 0) {
+              for (let i = 0; i < diff; i++) spawnMonkey(key, match.tournament?.name || 'ATP Tour');
+              player.lastAces = Number(aceCount);
+              // Tell server to persist this ace
+              try {
+                await fetch('/ace', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ player: key, tournament: match.tournament?.name || 'ATP Tour', count: diff })
+                });
+              } catch(e) {}
+            }
+            const tournament = (match.tournament?.name || 'ATP').slice(0, 18);
+            setPlayerStatus(key, 'LIVE · ' + tournament, true);
+          } else {
+            if (player.inMatch) player.lastAces = 0;
+            player.inMatch = false;
+            setPlayerStatus(key, 'no match', false);
+          }
+        }
+
+        setStatus(anyLive ? 'live' : 'idle');
+        if (!idleDismissed) {
+          document.getElementById('idle-msg').style.display = anyLive ? 'none' : 'block';
+        }
+
+      } catch(err) {
+        console.warn('Poll error:', err.message);
+        setStatus('offline');
+      }
+    }
 
     function setStatus(state) {
       const dot = document.getElementById('status-dot');
