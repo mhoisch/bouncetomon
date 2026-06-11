@@ -456,11 +456,10 @@
         });
         await loadPersistentState();
         connectWebSocket();
-        pollTennisData();
         let countdown = 30;
         setInterval(() => {
           countdown--;
-          if (countdown <= 0) { pollTennisData(); countdown = 30; }
+          if (countdown <= 0) countdown = 30;
           const rt = document.getElementById('refresh-text');
           if (rt) rt.textContent = countdown === 30 ? 'refreshes every 30s' : 'next refresh in ' + countdown + 's';
         }, 1000);
@@ -695,63 +694,6 @@
 
     // Dummy
     async function fetchLiveMatches() {}
-
-    // ── Browser-side tennis polling via CORS proxy ──
-    async function pollTennisData() {
-      try {
-        setStatus('checking');
-        const targetUrl = encodeURIComponent('https://api.sofascore.com/api/v1/sport/tennis/events/live');
-        const res = await fetch('https://api.allorigins.win/get?url=' + targetUrl);
-        if (!res.ok) throw new Error('non-200');
-        const wrapper = await res.json();
-        const data = JSON.parse(wrapper.contents);
-        const events = data.events || [];
-        let anyLive = false;
-
-        for (const [key, player] of Object.entries(PLAYERS)) {
-          const match = events.find(e => {
-            const h = (e.homeTeam?.name || '').toLowerCase();
-            const a = (e.awayTeam?.name || '').toLowerCase();
-            return player.names.some(n => h.includes(n) || a.includes(n));
-          });
-
-          if (match) {
-            anyLive = true;
-            player.inMatch = true;
-            const isHome = player.names.some(n => (match.homeTeam?.name || '').toLowerCase().includes(n));
-            const aceCount = isHome ? (match.homeScore?.aces ?? 0) : (match.awayScore?.aces ?? 0);
-            const diff = Number(aceCount) - player.lastAces;
-            if (diff > 0) {
-              for (let i = 0; i < diff; i++) spawnMonkey(key, match.tournament?.name || 'ATP Tour');
-              player.lastAces = Number(aceCount);
-              // Tell server to persist this ace
-              try {
-                await fetch('/ace', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ player: key, tournament: match.tournament?.name || 'ATP Tour', count: diff })
-                });
-              } catch(e) {}
-            }
-            const tournament = (match.tournament?.name || 'ATP').slice(0, 18);
-            setPlayerStatus(key, 'LIVE · ' + tournament, true);
-          } else {
-            if (player.inMatch) player.lastAces = 0;
-            player.inMatch = false;
-            setPlayerStatus(key, 'no match', false);
-          }
-        }
-
-        setStatus(anyLive ? 'live' : 'idle');
-        if (!idleDismissed) {
-          document.getElementById('idle-msg').style.display = anyLive ? 'none' : 'block';
-        }
-
-      } catch(err) {
-        console.warn('Poll error:', err.message);
-        setStatus('offline');
-      }
-    }
 
     function setStatus(state) {
       const dot = document.getElementById('status-dot');
