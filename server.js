@@ -146,8 +146,8 @@ async function pollMatches() {
 
     for (const [key, player] of Object.entries(PLAYERS)) {
       const match = list.find(e => {
-        const p1 = (e.home_name || e.player1 || e.home || e.player_1 || '').toLowerCase();
-        const p2 = (e.away_name || e.player2 || e.away || e.player_2 || '').toLowerCase();
+        const p1 = (e.homeName || e.homeFullName || e.homeFirstName || e.home_name || '').toLowerCase();
+        const p2 = (e.awayName || e.awayFullName || e.awayFirstName || e.away_name || '').toLowerCase();
         return player.names.some(n => p1.includes(n) || p2.includes(n));
       });
 
@@ -156,14 +156,20 @@ async function pollMatches() {
         player.inMatch = true;
 
         const isHome = player.names.some(n =>
-          (match.home_name || match.player1 || match.home || '').toLowerCase().includes(n)
+          (match.homeName || match.homeFullName || match.homeFirstName || '').toLowerCase().includes(n)
         );
 
-        // Try every possible ace field
-        const homeAces = match.home_aces ?? match.stats?.home_aces ?? match.statistics?.home_aces ?? 
-                         match.score?.home_aces ?? match.home_stats?.aces ?? 0;
-        const awayAces = match.away_aces ?? match.stats?.away_aces ?? match.statistics?.away_aces ?? 
-                         match.score?.away_aces ?? match.away_stats?.aces ?? 0;
+        // Log full match object once per player to find ace fields
+        if (!player._logged) {
+          console.log(`${key} match fields:`, JSON.stringify(match).slice(0, 800));
+          player._logged = true;
+        }
+
+        // Try every possible ace field based on Flashscore naming
+        const homeAces = match.homeAces ?? match.homeServiceAces ?? match.homeStats?.aces ??
+                         match.home_aces ?? match.statistics?.homeAces ?? 0;
+        const awayAces = match.awayAces ?? match.awayServiceAces ?? match.awayStats?.aces ??
+                         match.away_aces ?? match.statistics?.awayAces ?? 0;
         const aceCount = Number(isHome ? homeAces : awayAces);
 
         const diff = aceCount - player.lastAces;
