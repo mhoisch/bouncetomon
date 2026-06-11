@@ -700,13 +700,11 @@
     async function pollTennisData() {
       try {
         setStatus('checking');
-        const proxyUrl = 'https://corsproxy.io/?url=';
         const targetUrl = encodeURIComponent('https://api.sofascore.com/api/v1/sport/tennis/events/live');
-        const res = await fetch(proxyUrl + targetUrl, {
-          headers: { 'Accept': 'application/json' }
-        });
+        const res = await fetch('https://api.allorigins.win/get?url=' + targetUrl);
         if (!res.ok) throw new Error('non-200');
-        const data = await res.json();
+        const wrapper = await res.json();
+        const data = JSON.parse(wrapper.contents);
         const events = data.events || [];
         let anyLive = false;
 
