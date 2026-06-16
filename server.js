@@ -159,18 +159,33 @@ async function pollMatches() {
           (match.homeName || match.homeFullName || match.homeFirstName || '').toLowerCase().includes(n)
         );
 
-        // Log full match object once per player to find ace fields
-        if (!player._logged) {
-          console.log(`${key} match fields:`, JSON.stringify(match).slice(0, 800));
-          player._logged = true;
+        // Fetch detailed match stats to get aces
+        let aceCount = 0;
+        try {
+          const eventId = match.eventId || match.id || match.matchId;
+          const statsRes = await fetch(`https://api.sportdb.dev/api/flashscore/match/${eventId}/statistics`, {
+            headers: { 'X-API-Key': SPORTDB_KEY, 'Accept': 'application/json' },
+            timeout: 5000,
+          });
+          if (statsRes.ok) {
+            const statsData = await statsRes.json();
+            if (!player._statsLogged) {
+              console.log(`${key} stats fields:`, JSON.stringify(statsData).slice(0, 800));
+              player._statsLogged = true;
+            }
+            // Flashscore stats come as array of {name, home, away} objects
+            const statsList = statsData.statistics || statsData.stats || statsData || [];
+            const flatStats = Array.isArray(statsList) ? statsList : Object.values(statsList);
+            const aceStat = flatStats.find(s =>
+              (s.name || s.type || s.key || '').toLowerCase().includes('ace')
+            );
+            if (aceStat) {
+              aceCount = Number(isHome ? (aceStat.home ?? aceStat.homeValue ?? 0) : (aceStat.away ?? aceStat.awayValue ?? 0));
+            }
+          }
+        } catch(e) {
+          console.warn('Stats fetch error:', e.message);
         }
-
-        // Try every possible ace field based on Flashscore naming
-        const homeAces = match.homeAces ?? match.homeServiceAces ?? match.homeStats?.aces ??
-                         match.home_aces ?? match.statistics?.homeAces ?? 0;
-        const awayAces = match.awayAces ?? match.awayServiceAces ?? match.awayStats?.aces ??
-                         match.away_aces ?? match.statistics?.awayAces ?? 0;
-        const aceCount = Number(isHome ? homeAces : awayAces);
 
         const diff = aceCount - player.lastAces;
         if (diff > 0) {
