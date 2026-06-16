@@ -4,7 +4,7 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>BounceToMonkey — Live Tennis Aces → Manhattan Monkeys</title>
-  <meta name="description" content="Every time Sinner, Djokovic, or Alcaraz hits an ace, a monkey lands somewhere in Manhattan. Live. Real data."/>
+  <meta name="description" content="Every time Sinner, Djokovic, or Alcaraz wins a set, a monkey lands somewhere in Manhattan. Live. Real data."/>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐒</text></svg>"/>
   <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet"/>
   <link href="https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.css" rel="stylesheet"/>
@@ -284,7 +284,7 @@
 <body>
 
   <div id="top-bar">
-    <div id="logo">Bounce<span>To</span>Monkey</div><div id="tagline">Hit an ace. Get a monkey.</div>
+    <div id="logo">Bounce<span>To</span>Monkey</div><div id="tagline">Win a set. Get a monkey.</div>
     <div id="search-wrap">
       <svg id="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--text-dim);pointer-events:none"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
       <input id="search" type="text" placeholder="Search any location..." autocomplete="off" spellcheck="false"/>
@@ -310,7 +310,7 @@
 
   <div id="side-panel">
     <div class="pbox">
-      <div class="plabel">Players</div>
+      <div class="plabel">Players — Sets Won</div>
       <div class="player-row">
         <div class="pdot" style="background:var(--red);box-shadow:0 0 7px var(--red);"></div>
         <div class="pname">Sinner</div>
@@ -354,16 +354,16 @@
     </div>
 
     <div class="pbox">
-      <div class="plabel">Ace Log</div>
+      <div class="plabel">Set Log</div>
       <div id="ace-log">
-        <div id="ace-log-empty">No aces yet this session</div>
+        <div id="ace-log-empty">No sets won yet this session</div>
       </div>
     </div>
 
     <div class="pbox">
       <div class="plabel">Live Data Source</div>
       <div class="source-line">
-        Match &amp; ace stats via<br>
+        Match &amp; live scores via<br>
         <a href="https://www.sofascore.com" target="_blank" rel="noopener">SofaScore Live Scores</a><br><br>
         Schedule &amp; rankings via<br>
         <a href="https://www.atptour.com/en/scores/current" target="_blank" rel="noopener">ATP Tour Official</a><br><br>
@@ -374,7 +374,7 @@
   </div>
 
   <div id="counter-box">
-    <div class="cl">Total Aces → Monkeys</div>
+    <div class="cl">Total Sets → Monkeys</div>
     <div class="cn" id="total-count">0</div>
     <div class="cs">placed across manhattan</div>
     <div class="cc">&#x2767; since jun 7, 2026</div>
@@ -387,7 +387,7 @@
       <div class="im-title">Monkeys at rest</div>
       <div class="im-sub">
         None of our three players are in a live match right now.<br><br>
-        A monkey lands in Manhattan the instant an ace is hit during any ATP match featuring Sinner, Djokovic, or Alcaraz.
+        A monkey lands in Manhattan every time Sinner, Djokovic, Alcaraz, Zverev, or Fritz wins a set in any ATP match.
       </div>
       <button class="im-dismiss" id="idle-dismiss">Got it — show me the map</button>
     </div>
@@ -523,10 +523,10 @@
 
       const popup = new mapboxgl.Popup({ offset: [0, -size - 4], closeButton: true, maxWidth: '210px' })
         .setHTML(`
-          <div class="monkey-popup-name" style="color:${player.color}">${names[playerKey]} — Ace</div>
+          <div class="monkey-popup-name" style="color:${player.color}">${names[playerKey]} — Set Won</div>
           <div class="monkey-popup-row"><span class="monkey-popup-label">Time</span><span class="monkey-popup-val">${timeStr}</span></div>
           <div class="monkey-popup-row"><span class="monkey-popup-label">Tournament</span><span class="monkey-popup-val">${tournStr}</span></div>
-          <div class="monkey-popup-row"><span class="monkey-popup-label">Ace</span><span class="monkey-popup-val" style="color:${player.color}">${ordinal(aceNum)} this match</span></div>
+          <div class="monkey-popup-row"><span class="monkey-popup-label">Set</span><span class="monkey-popup-val" style="color:${player.color}">${ordinal(aceNum)} this match</span></div>
         `);
 
       const marker = new mapboxgl.Marker({ element: el, anchor: 'bottom' })
@@ -543,16 +543,16 @@
       document.getElementById('aces-' + playerKey).textContent = player.aces;
       sessionStorage.setItem('btm_total', totalAces);
       sessionStorage.setItem('btm_aces_' + playerKey, player.aces);
-      logAce(playerKey, player.color, names[playerKey], timeStr);
+      logSet(playerKey, player.color, names[playerKey], timeStr);
     }
 
-    function logAce(key, color, name, time) {
+    function logSet(key, color, name, time) {
       const log = document.getElementById('ace-log');
       const empty = document.getElementById('ace-log-empty');
       if (empty) empty.remove();
       const d = document.createElement('div');
       d.className = 'ace-entry';
-      d.innerHTML = `<span class="ace-player" style="color:${color}">${name}</span> ace — ${time}`;
+      d.innerHTML = `<span class="ace-player" style="color:${color}">${name}</span> set won — ${time}`;
       log.insertBefore(d, log.firstChild);
       while (log.children.length > 9) log.removeChild(log.lastChild);
     }
@@ -625,7 +625,7 @@
       const tournStr = (tournament || 'ATP Tour').slice(0, 22);
       const popup = new mapboxgl.Popup({ offset: [0, -size - 4], closeButton: true, maxWidth: '210px' })
         .setHTML(`
-          <div class="monkey-popup-name" style="color:${player.color}">${names[playerKey]} — Ace</div>
+          <div class="monkey-popup-name" style="color:${player.color}">${names[playerKey]} — Set Won</div>
           <div class="monkey-popup-row"><span class="monkey-popup-label">Date</span><span class="monkey-popup-val">${dateStr}</span></div>
           <div class="monkey-popup-row"><span class="monkey-popup-label">Time</span><span class="monkey-popup-val">${timeStr}</span></div>
           <div class="monkey-popup-row"><span class="monkey-popup-label">Tournament</span><span class="monkey-popup-val">${tournStr}</span></div>
@@ -655,7 +655,7 @@
           return;
         }
 
-        if (msg.type === 'ace') {
+        if (msg.type === 'set') {
           spawnMonkey(msg.player, msg.tournament);
           if (!idleDismissed) document.getElementById('idle-msg').style.display = 'none';
         }
