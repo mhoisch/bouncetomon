@@ -456,12 +456,12 @@
         });
         await loadPersistentState();
         connectWebSocket();
-        let countdown = 30;
+        let countdown = 2640;
         setInterval(() => {
           countdown--;
           if (countdown <= 0) countdown = 30;
           const rt = document.getElementById('refresh-text');
-          if (rt) rt.textContent = countdown === 30 ? 'refreshes every 30s' : 'next refresh in ' + countdown + 's';
+          if (rt) rt.textContent = countdown === 2640 ? 'refreshes every 44min' : 'next refresh in ' + Math.ceil(countdown/60) + 'min';
         }, 1000);
 
       });
@@ -671,7 +671,7 @@
             document.getElementById('idle-msg').style.display = 'block';
           }
           const rt = document.getElementById('refresh-text');
-          if (rt) { countdown = 30; rt.textContent = 'refreshes every 30s'; }
+          if (rt) { countdown = 2640; rt.textContent = 'refreshes every 44min'; }
         }
 
         if (msg.type === 'error') {
