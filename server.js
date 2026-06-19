@@ -5,7 +5,7 @@ const WebSocket = require('ws');
 const fetch = require('node-fetch');
 
 const PORT = process.env.PORT || 3000;
-const POLL_INTERVAL = 30000;
+const POLL_INTERVAL = 2640000; // 44 minutes
 const DB_FILE = path.join(__dirname, 'aces.json');
 
 // ── Persistent database ──
